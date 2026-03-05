@@ -1,0 +1,114 @@
+{
+  "info": {
+    "name": "DCBS API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth - Register",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"password123\",\n  \"password_confirmation\": \"password123\"\n}"
+        },
+        "url": { "raw": "{{base_url}}/api/register", "host": ["{{base_url}}"], "path": ["api", "register"] }
+      }
+    },
+    {
+      "name": "Auth - Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"john@example.com\",\n  \"password\": \"password123\"\n}"
+        },
+        "url": { "raw": "{{base_url}}/api/login", "host": ["{{base_url}}"], "path": ["api", "login"] }
+      }
+    },
+    {
+      "name": "Statement - Upload",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "file", "type": "file", "src": "" },
+            { "key": "bank_account_id", "value": "", "type": "text" }
+          ]
+        },
+        "url": { "raw": "{{base_url}}/api/statements/upload", "host": ["{{base_url}}"], "path": ["api", "statements", "upload"] }
+      }
+    },
+    {
+      "name": "Transactions - List",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": { "raw": "{{base_url}}/api/transactions?per_page=20", "host": ["{{base_url}}"], "path": ["api", "transactions"], "query": [{"key":"per_page","value":"20"}] }
+      }
+    },
+    {
+      "name": "Dashboard",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": { "raw": "{{base_url}}/api/dashboard", "host": ["{{base_url}}"], "path": ["api", "dashboard"] }
+      }
+    },
+    {
+      "name": "Bank Accounts - List",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": { "raw": "{{base_url}}/api/bank-accounts", "host": ["{{base_url}}"], "path": ["api", "bank-accounts"] }
+      }
+    },
+    {
+      "name": "Daily Closings - List",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": { "raw": "{{base_url}}/api/daily-closings", "host": ["{{base_url}}"], "path": ["api", "daily-closings"] }
+      }
+    },
+    {
+      "name": "System - Health",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{base_url}}/api/health", "host": ["{{base_url}}"], "path": ["api", "health"] }
+      }
+    },
+    {
+      "name": "Admin - Diagnostics",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": { "raw": "{{base_url}}/api/admin/diagnostics", "host": ["{{base_url}}"], "path": ["api", "admin", "diagnostics"] }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "http://localhost" },
+    { "key": "token", "value": "" }
+  ]
+}

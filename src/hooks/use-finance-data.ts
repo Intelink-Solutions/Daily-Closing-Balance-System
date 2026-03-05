@@ -35,3 +35,10 @@ export function useUploadStatement() {
     },
   });
 }
+
+export function useStatementDiagnostics() {
+  return useMutation({
+    mutationFn: ({ file, sampleSize = 5 }: { file: File; sampleSize?: number }) =>
+      financeApi.diagnoseStatement(file, sampleSize),
+  });
+}

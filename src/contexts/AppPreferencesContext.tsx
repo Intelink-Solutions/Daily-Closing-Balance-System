@@ -1,7 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { sendEmailNotification } from "@/lib/api/notifications";
+import { hasApiBaseUrl } from "@/lib/api/client";
+import { loginApi, logoutApi } from "@/lib/api/auth";
 
-export type AppRole = "admin" | "staff";
+export type AppRole = "admin" | "staff" | "user";
 export type SupportedCurrency = "NGN" | "GHS" | "KES" | "ZAR" | "EGP" | "USD";
 export type AppNotificationChannel = "system" | "email";
 
@@ -43,7 +45,7 @@ type AppPreferencesContextValue = {
   userName: string | null;
   currentUserEmail: string | null;
   role: AppRole;
-  login: (email: string, password: string) => { ok: boolean; message: string };
+  login: (email: string, password: string) => Promise<{ ok: boolean; message: string }>;
   logout: () => void;
   updateCurrentProfile: (input: { name: string; email: string; password?: string }) => { ok: boolean; message: string };
   users: AppUser[];
@@ -275,6 +277,12 @@ function createUserId() {
   return `u-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function mapRole(input: string | undefined): AppRole {
+  if (input === "admin") return "admin";
+  if (input === "user") return "staff";
+  return "staff";
+}
+
 export function AppPreferencesProvider({ children }: { children: React.ReactNode }) {
   const [users, setUsers] = useState<StoredUser[]>(() => getInitialUsers());
   const [currentUserId, setCurrentUserId] = useState<string | null>(() =>
@@ -408,10 +416,55 @@ export function AppPreferencesProvider({ children }: { children: React.ReactNode
       setNotifications((prev) => [...next, ...prev].slice(0, 50));
     };
 
-    const login = (email: string, password: string) => {
+    const login = async (email: string, password: string) => {
+      if (hasApiBaseUrl) {
+        const apiResult = await loginApi(email, password);
+        if (apiResult.user && apiResult.ok) {
+          const userId = String(apiResult.user.id);
+          const nextRole = mapRole(apiResult.user.role);
+          const existing = users.find((user) => user.id === userId || user.email.toLowerCase() === apiResult.user.email.toLowerCase());
+
+          if (!existing) {
+            setUsers((prev) => [
+              {
+                id: userId,
+                name: apiResult.user.name,
+                email: apiResult.user.email.toLowerCase(),
+                password: "",
+                role: nextRole,
+                createdAt: apiResult.user.created_at ?? new Date().toISOString(),
+              },
+              ...prev,
+            ]);
+          } else {
+            setUsers((prev) => prev.map((user) => (
+              user.id === existing.id
+                ? {
+                    ...user,
+                    id: userId,
+                    name: apiResult.user.name,
+                    email: apiResult.user.email.toLowerCase(),
+                    role: nextRole,
+                    createdAt: apiResult.user.created_at ?? user.createdAt,
+                  }
+                : user
+            )));
+          }
+
+          setCurrentUserId(userId);
+          pushNotification("Sign-in Alert", `${apiResult.user.name} signed in successfully.`, ["system", "email"]);
+          return { ok: true, message: apiResult.message || "Login successful." };
+        }
+
+        return { ok: false, message: apiResult.message || "Unable to login with API credentials." };
+      }
+
       const found = users.find((user) => user.email.toLowerCase() === email.toLowerCase().trim());
       if (!found || found.password !== password) {
-        return { ok: false, message: "Invalid email or password." };
+        return {
+          ok: false,
+          message: "Invalid email or password. If you intend to use backend accounts, set VITE_API_BASE_URL and restart the frontend.",
+        };
       }
 
       setCurrentUserId(found.id);
@@ -420,6 +473,9 @@ export function AppPreferencesProvider({ children }: { children: React.ReactNode
     };
 
     const logout = () => {
+      if (hasApiBaseUrl) {
+        void logoutApi();
+      }
       if (currentUser) {
         pushNotification("Sign-out Alert", `${currentUser.name} signed out.`, ["system"]);
       }

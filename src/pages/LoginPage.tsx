@@ -18,7 +18,7 @@ const LoginPage = () => {
 
   const canSubmit = useMemo(() => email.trim().length > 0 && password.trim().length > 0, [email, password]);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (!canSubmit) {
@@ -26,7 +26,7 @@ const LoginPage = () => {
       return;
     }
 
-    const result = login(email.trim(), password);
+    const result = await login(email.trim(), password);
     if (!result.ok) {
       toast.error(result.message);
       return;
@@ -102,9 +102,11 @@ const LoginPage = () => {
                 Login
               </Button>
 
-              <p className="text-xs text-muted-foreground text-center">
-                Demo accounts: admin@dcbs.com / admin123 and staff@dcbs.com / staff123
-              </p>
+              <div className="rounded-md border border-border bg-muted/50 p-3 text-xs space-y-1">
+                <p className="font-medium text-foreground">Demo Accounts</p>
+                <p className="text-muted-foreground">Admin: demo.admin@dcbs.local / Password123!</p>
+                <p className="text-muted-foreground">User: demo.user@dcbs.local / Password123!</p>
+              </div>
             </form>
           </CardContent>
         </Card>

@@ -2,11 +2,12 @@ import type {
   DailyReportRow,
   DashboardPayload,
   PaginatedResponse,
+  StatementDiagnosticsResponse,
   Transaction,
   TransactionsFilters,
   UploadStatementResponse,
 } from "@/types/finance";
-import { apiRequest, hasApiBaseUrl } from "@/lib/api/client";
+import { apiRequest, getAuthToken, hasApiBaseUrl } from "@/lib/api/client";
 
 type ApiEnvelope<T> = {
   success: boolean;
@@ -16,7 +17,8 @@ type ApiEnvelope<T> = {
 
 type BackendTransaction = {
   id: string;
-  transactionDate: string;
+  transaction_date?: string;
+  transactionDate?: string;
   narration: string;
   debit: number | string | null;
   credit: number | string | null;
@@ -25,10 +27,22 @@ type BackendTransaction = {
 
 type BackendDailyRow = {
   date: string;
-  opening: number | string;
-  credits: number | string;
-  debits: number | string;
-  closing: number | string;
+  opening?: number | string;
+  credits?: number | string;
+  debits?: number | string;
+  closing?: number | string;
+  closing_balance?: number | string;
+  difference?: number | string;
+};
+
+type BackendTransactionsPayload = {
+  items: BackendTransaction[];
+  meta: {
+    current_page: number;
+    last_page: number;
+    per_page: number;
+    total: number;
+  };
 };
 
 type LocalTransactionRecord = {
@@ -273,12 +287,13 @@ function toNumber(value: number | string | null | undefined): number | null {
 }
 
 function mapBackendTransaction(input: BackendTransaction): Transaction {
-  const dateObject = new Date(input.transactionDate);
+  const sourceDate = input.transaction_date ?? input.transactionDate ?? "";
+  const dateObject = new Date(sourceDate);
   const isValidDate = !Number.isNaN(dateObject.getTime());
 
   return {
     id: input.id,
-    date: isValidDate ? dateObject.toLocaleDateString() : String(input.transactionDate),
+    date: isValidDate ? dateObject.toLocaleDateString() : String(sourceDate),
     time: isValidDate ? dateObject.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--",
     narration: input.narration,
     debit: toNumber(input.debit),
@@ -289,22 +304,39 @@ function mapBackendTransaction(input: BackendTransaction): Transaction {
 
 function mapBackendDailyRow(row: BackendDailyRow): DailyReportRow {
   const dateObject = new Date(row.date);
+  const closing = toNumber(row.closing_balance ?? row.closing) ?? 0;
+  const difference = toNumber(row.difference) ?? 0;
+  const opening = toNumber(row.opening) ?? (closing - difference);
+
+  let credits = toNumber(row.credits);
+  let debits = toNumber(row.debits);
+
+  if (credits === null || debits === null) {
+    if (difference >= 0) {
+      credits = difference;
+      debits = 0;
+    } else {
+      credits = 0;
+      debits = Math.abs(difference);
+    }
+  }
+
   return {
     date: Number.isNaN(dateObject.getTime()) ? row.date : dateObject.toLocaleDateString(),
-    opening: toNumber(row.opening) ?? 0,
-    credits: toNumber(row.credits) ?? 0,
-    debits: toNumber(row.debits) ?? 0,
-    closing: toNumber(row.closing) ?? 0,
+    opening,
+    credits,
+    debits,
+    closing,
   };
 }
 
 function serializeFilters(filters: TransactionsFilters): string {
   const params = new URLSearchParams();
   if (filters.search) params.set("search", filters.search);
-  if (filters.fromDate) params.set("fromDate", filters.fromDate);
-  if (filters.toDate) params.set("toDate", filters.toDate);
+  if (filters.fromDate) params.set("date_from", filters.fromDate);
+  if (filters.toDate) params.set("date_to", filters.toDate);
   params.set("page", String(filters.page));
-  params.set("pageSize", String(filters.pageSize));
+  params.set("per_page", String(filters.pageSize));
   return params.toString();
 }
 
@@ -329,10 +361,12 @@ export const financeApi = {
 
     try {
       const query = serializeFilters(filters);
-      const response = await apiRequest<ApiEnvelope<PaginatedResponse<BackendTransaction>>>(`/transactions?${query}`);
+      const response = await apiRequest<ApiEnvelope<BackendTransactionsPayload>>(`/transactions?${query}`);
 
       return {
-        ...response.data,
+        total: response.data.meta.total,
+        page: response.data.meta.current_page,
+        pageSize: response.data.meta.per_page,
         items: response.data.items.map(mapBackendTransaction),
       };
     } catch {
@@ -357,7 +391,7 @@ export const financeApi = {
     const ext = file.name.split(".").pop()?.toLowerCase();
 
     const formData = new FormData();
-    formData.append("statement", file);
+    formData.append("file", file);
 
     const processLocal = async () => {
       const existing = readLocalTransactions();
@@ -398,8 +432,10 @@ export const financeApi = {
     }
 
     try {
+      const token = getAuthToken();
       const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/statements/upload`, {
         method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         body: formData,
       });
 
@@ -407,13 +443,53 @@ export const financeApi = {
         throw new Error(`Upload failed with status ${response.status}`);
       }
 
-      const payload = (await response.json()) as ApiEnvelope<Omit<UploadStatementResponse, "message">>;
+      const payload = (await response.json()) as ApiEnvelope<Partial<UploadStatementResponse>>;
       return {
-        ...payload.data,
+        transactionsSaved: payload.data.transactionsSaved ?? 0,
+        dailyClosingDays: payload.data.dailyClosingDays ?? 0,
+        extractedRange: payload.data.extractedRange,
         message: payload.message,
       };
     } catch {
       return processLocal();
     }
+  },
+
+  async diagnoseStatement(file: File, sampleSize = 5): Promise<StatementDiagnosticsResponse> {
+    if (!hasApiBaseUrl) {
+      return {
+        profile: "local",
+        transactionsParsed: 0,
+        sampleRows: [],
+        warnings: ["Diagnostics requires backend API configuration."],
+      };
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("sample_size", String(sampleSize));
+
+    const token = getAuthToken();
+    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/statements/diagnostics`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let message = `Diagnostics failed with status ${response.status}`;
+      try {
+        const payload = (await response.json()) as { message?: string };
+        if (payload?.message) {
+          message = payload.message;
+        }
+      } catch {
+        // ignore parse errors
+      }
+      throw new Error(message);
+    }
+
+    const payload = (await response.json()) as ApiEnvelope<StatementDiagnosticsResponse>;
+    return payload.data;
   },
 };

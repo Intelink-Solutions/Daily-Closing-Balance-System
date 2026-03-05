@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Search, ChevronLeft, ChevronRight, Eye, CalendarIcon, X } from "lucide-react";
+import { Search, ChevronLeft, ChevronRight, Eye, CalendarIcon, X, Printer } from "lucide-react";
 import { endOfDay, format, startOfDay } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,6 +18,7 @@ import {
 import { useTransactionsData } from "@/hooks/use-finance-data";
 import type { Transaction } from "@/types/finance";
 import { useAppPreferences } from "@/contexts/AppPreferencesContext";
+import { financeApi } from "@/lib/api/finance";
 
 const Transactions = () => {
   const { formatAmount } = useAppPreferences();
@@ -26,6 +27,7 @@ const Transactions = () => {
   const [page, setPage] = useState(1);
   const [fromDate, setFromDate] = useState<Date | undefined>();
   const [toDate, setToDate] = useState<Date | undefined>();
+  const [isPrinting, setIsPrinting] = useState(false);
   const pageSize = 5;
 
   const normalizedFromDate = fromDate ? format(startOfDay(fromDate), "yyyy-MM-dd") : undefined;
@@ -69,6 +71,110 @@ const Transactions = () => {
     setPage(1);
   };
 
+  const escapeHtml = (value: string) =>
+    value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+
+  const fetchAllTransactionsForPrint = async () => {
+    const all: Transaction[] = [];
+    let printPage = 1;
+    const printPageSize = 500;
+    let total = 0;
+
+    do {
+      const response = await financeApi.getTransactions({
+        search,
+        fromDate: normalizedFromDate,
+        toDate: normalizedToDate,
+        page: printPage,
+        pageSize: printPageSize,
+      });
+
+      all.push(...response.items);
+      total = response.total;
+      printPage += 1;
+    } while (all.length < total && total > 0);
+
+    return all;
+  };
+
+  const handlePrintAll = async () => {
+    try {
+      setIsPrinting(true);
+      const rows = await fetchAllTransactionsForPrint();
+
+      const printWindow = window.open("", "_blank", "noopener,noreferrer");
+      if (!printWindow) {
+        setIsPrinting(false);
+        return;
+      }
+
+      const tableRows = rows.length
+        ? rows
+            .map(
+              (tx) => `
+                <tr>
+                  <td>${escapeHtml(tx.date)}</td>
+                  <td>${escapeHtml(tx.time)}</td>
+                  <td>${escapeHtml(tx.narration)}</td>
+                  <td style="text-align:right;">${tx.debit ? escapeHtml(formatAmount(tx.debit)) : "—"}</td>
+                  <td style="text-align:right;">${tx.credit ? escapeHtml(formatAmount(tx.credit)) : "—"}</td>
+                  <td style="text-align:right;">${escapeHtml(formatAmount(tx.balance))}</td>
+                </tr>
+              `,
+            )
+            .join("")
+        : `<tr><td colspan="6" style="text-align:center;">No transactions found.</td></tr>`;
+
+      const title = `Transactions Report - ${new Date().toLocaleString()}`;
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>${escapeHtml(title)}</title>
+            <style>
+              @page { size: A4 landscape; margin: 10mm; }
+              body { font-family: Arial, sans-serif; padding: 16px; }
+              h1 { font-size: 18px; margin-bottom: 4px; }
+              p { margin: 0 0 12px; color: #555; }
+              table { width: 100%; border-collapse: collapse; font-size: 12px; }
+              th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+              th { background: #f5f5f5; text-align: left; }
+              td:nth-child(3), th:nth-child(3) { width: 55%; }
+              td:nth-child(3) { white-space: pre-wrap; word-break: break-word; }
+              td:nth-child(1), td:nth-child(2), td:nth-child(4), td:nth-child(5), td:nth-child(6) { white-space: nowrap; }
+            </style>
+          </head>
+          <body>
+            <h1>Transactions</h1>
+            <p>Total: ${rows.length}</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Time</th>
+                  <th>Narration</th>
+                  <th>Debit</th>
+                  <th>Credit</th>
+                  <th>Balance</th>
+                </tr>
+              </thead>
+              <tbody>${tableRows}</tbody>
+            </table>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.focus();
+      printWindow.print();
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
       <div>
@@ -82,14 +188,20 @@ const Transactions = () => {
             <div className="flex flex-col gap-3">
               <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
                 <CardTitle className="text-base sm:text-lg">All Transactions</CardTitle>
-                <div className="relative w-full sm:w-64">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search transactions..."
-                    value={search}
-                    onChange={(e) => handleSearchChange(e.target.value)}
-                    className="pl-9 h-9"
-                  />
+                <div className="flex w-full sm:w-auto gap-2">
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search transactions..."
+                      value={search}
+                      onChange={(e) => handleSearchChange(e.target.value)}
+                      className="pl-9 h-9"
+                    />
+                  </div>
+                  <Button variant="outline" className="h-9" onClick={handlePrintAll} disabled={isPrinting}>
+                    <Printer className="h-4 w-4 mr-2" />
+                    {isPrinting ? "Preparing..." : "Print"}
+                  </Button>
                 </div>
               </div>
 
@@ -164,7 +276,7 @@ const Transactions = () => {
                         <div className="min-w-0 flex-1">
                           <p className="text-xs text-muted-foreground">{tx.date}</p>
                           <p className="text-[11px] text-muted-foreground">{tx.time}</p>
-                          <p className="text-sm font-medium truncate mt-0.5">{tx.narration}</p>
+                          <p className="text-sm font-medium mt-0.5 whitespace-pre-wrap break-words">{tx.narration}</p>
                         </div>
                         <Eye className="h-4 w-4 text-muted-foreground shrink-0 ml-2 mt-1" />
                       </div>
@@ -209,7 +321,7 @@ const Transactions = () => {
                       >
                         <td className="py-3 px-4 whitespace-nowrap" onClick={() => setSelectedTx(tx)}>{tx.date}</td>
                         <td className="py-3 px-4 whitespace-nowrap" onClick={() => setSelectedTx(tx)}>{tx.time}</td>
-                        <td className="py-3 px-4 max-w-xs truncate" onClick={() => setSelectedTx(tx)}>{tx.narration}</td>
+                        <td className="py-3 px-4 max-w-[30rem] whitespace-pre-wrap break-words" onClick={() => setSelectedTx(tx)}>{tx.narration}</td>
                         <td className="py-3 px-4 text-right text-destructive font-medium" onClick={() => setSelectedTx(tx)}>{tx.debit ? formatAmount(tx.debit) : "—"}</td>
                         <td className="py-3 px-4 text-right text-success font-medium" onClick={() => setSelectedTx(tx)}>{tx.credit ? formatAmount(tx.credit) : "—"}</td>
                         <td className="py-3 px-4 text-right font-semibold" onClick={() => setSelectedTx(tx)}>{formatAmount(tx.balance)}</td>
@@ -250,7 +362,7 @@ const Transactions = () => {
       </motion.div>
 
       <Dialog open={!!selectedTx} onOpenChange={() => setSelectedTx(null)}>
-        <DialogContent className="max-w-[90vw] sm:max-w-md">
+        <DialogContent className="max-w-[95vw] sm:max-w-2xl lg:max-w-4xl">
           <DialogHeader>
             <DialogTitle>Transaction Details</DialogTitle>
             <DialogDescription>Full details for the selected transaction</DialogDescription>
@@ -267,7 +379,7 @@ const Transactions = () => {
               ].map(([label, value]) => (
                 <div key={label} className="flex justify-between py-2 border-b border-border/50 gap-4">
                   <span className="text-muted-foreground text-sm shrink-0">{label}</span>
-                  <span className="font-semibold text-sm text-right">{value}</span>
+                  <span className={cn("font-semibold text-sm", label === "Narration" ? "text-left whitespace-pre-wrap break-words max-w-[75%]" : "text-right")}>{value}</span>
                 </div>
               ))}
             </div>

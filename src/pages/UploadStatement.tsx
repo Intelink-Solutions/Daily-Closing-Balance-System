@@ -4,8 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useUploadStatement } from "@/hooks/use-finance-data";
-import type { UploadStatementResponse } from "@/types/finance";
+import { useStatementDiagnostics, useUploadStatement } from "@/hooks/use-finance-data";
+import type { StatementDiagnosticsResponse, UploadStatementResponse } from "@/types/finance";
 import { useAppPreferences } from "@/contexts/AppPreferencesContext";
 
 const UploadStatement = () => {
@@ -14,8 +14,10 @@ const UploadStatement = () => {
   const [status, setStatus] = useState<"idle" | "uploading" | "success" | "error">("idle");
   const [message, setMessage] = useState<string>("");
   const [uploadSummary, setUploadSummary] = useState<UploadStatementResponse | null>(null);
+  const [diagnosticsSummary, setDiagnosticsSummary] = useState<StatementDiagnosticsResponse | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadMutation = useUploadStatement();
+  const diagnosticsMutation = useStatementDiagnostics();
   const { role } = useAppPreferences();
 
   const formatDateTime = (value: string) => {
@@ -32,11 +34,6 @@ const UploadStatement = () => {
       setMessage("Only CSV, DOC, DOCX, and PDF files are supported.");
       return false;
     }
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      setStatus("error");
-      setMessage("File is too large. Please upload a file under 10 MB.");
-      return false;
-    }
     return true;
   };
 
@@ -49,6 +46,7 @@ const UploadStatement = () => {
     setStatus("idle");
     setMessage("");
     setUploadSummary(null);
+    setDiagnosticsSummary(null);
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -85,6 +83,26 @@ const UploadStatement = () => {
       setStatus("error");
       setMessage("Failed to process. Check the file format and try again.");
       setUploadSummary(null);
+    }
+  };
+
+  const handleDiagnostics = async () => {
+    if (!file) return;
+    if (role !== "admin") {
+      setStatus("error");
+      setMessage("Only admins can run diagnostics.");
+      return;
+    }
+
+    try {
+      const result = await diagnosticsMutation.mutateAsync({ file, sampleSize: 5 });
+      setDiagnosticsSummary(result);
+      setStatus("success");
+      setMessage(`Diagnostics complete: ${result.transactionsParsed} parsed rows (${result.profile}).`);
+    } catch {
+      setStatus("error");
+      setMessage("Failed to run diagnostics. Please try again.");
+      setDiagnosticsSummary(null);
     }
   };
 
@@ -156,24 +174,64 @@ const UploadStatement = () => {
               )}
             </AnimatePresence>
 
-            <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
+            <div className="grid gap-2 sm:grid-cols-2">
               <Button
-                onClick={handleUpload}
-                disabled={!file || status === "uploading" || role !== "admin"}
-                className="w-full bg-gradient-to-r from-primary to-chart-4 hover:opacity-90 transition-opacity"
+                type="button"
+                variant="outline"
+                onClick={handleDiagnostics}
+                disabled={!file || diagnosticsMutation.isPending || status === "uploading" || role !== "admin"}
               >
-                {status === "uploading" ? (
-                  <motion.span animate={{ opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 1 }}>
-                    Processing...
-                  </motion.span>
-                ) : (
-                  <>
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload Statement
-                  </>
-                )}
+                {diagnosticsMutation.isPending ? "Running Diagnostics..." : "Run Diagnostics"}
               </Button>
-            </motion.div>
+
+              <motion.div whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
+                <Button
+                  onClick={handleUpload}
+                  disabled={!file || status === "uploading" || diagnosticsMutation.isPending || role !== "admin"}
+                  className="w-full bg-gradient-to-r from-primary to-chart-4 hover:opacity-90 transition-opacity"
+                >
+                  {status === "uploading" ? (
+                    <motion.span animate={{ opacity: [1, 0.5, 1] }} transition={{ repeat: Infinity, duration: 1 }}>
+                      Processing...
+                    </motion.span>
+                  ) : (
+                    <>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload Statement
+                    </>
+                  )}
+                </Button>
+              </motion.div>
+            </div>
+
+            {diagnosticsSummary && (
+              <div className="rounded-md border bg-muted/40 p-3 text-xs sm:text-sm space-y-2">
+                <p><span className="font-medium">Detected profile:</span> {diagnosticsSummary.profile}</p>
+                <p><span className="font-medium">Transactions parsed:</span> {diagnosticsSummary.transactionsParsed}</p>
+                {diagnosticsSummary.warnings.length > 0 && (
+                  <div>
+                    <p className="font-medium text-destructive">Warnings:</p>
+                    <ul className="list-disc list-inside">
+                      {diagnosticsSummary.warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {diagnosticsSummary.sampleRows.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="font-medium">Sample rows:</p>
+                    {diagnosticsSummary.sampleRows.slice(0, 3).map((row, index) => (
+                      <div key={`${row.date}-${row.time}-${index}`} className="rounded border bg-background p-2">
+                        <p>{row.date} {row.time ?? "--:--"}</p>
+                        <p className="truncate">{row.narration}</p>
+                        <p>Dr: {row.debit.toLocaleString()} | Cr: {row.credit.toLocaleString()} | Bal: {row.balance.toLocaleString()}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <AnimatePresence>
               {status === "success" && (

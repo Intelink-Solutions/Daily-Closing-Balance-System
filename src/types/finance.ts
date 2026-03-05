@@ -60,6 +60,23 @@ export type UploadStatementResponse = {
   message: string;
 };
 
+export type StatementDiagnosticRow = {
+  date: string;
+  time: string | null;
+  narration: string;
+  debit: number;
+  credit: number;
+  balance: number;
+  action: string;
+};
+
+export type StatementDiagnosticsResponse = {
+  profile: string;
+  transactionsParsed: number;
+  sampleRows: StatementDiagnosticRow[];
+  warnings: string[];
+};
+
 export type DashboardPayload = {
   summary: DashboardSummary;
   trend: BalancePoint[];
